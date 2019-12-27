@@ -37,7 +37,8 @@ public class ZuulServerChannelInitializer extends BaseZuulChannelInitializer {
     }
 
     /**
-     * Use {@link #ZuulServerChannelInitializer(String, ChannelConfig, ChannelConfig, ChannelGroup)} instead.
+     * Use {@link #ZuulServerChannelInitializer(String, ChannelConfig, ChannelConfig, ChannelGroup)}
+     * instead.
      */
     @Deprecated
     public ZuulServerChannelInitializer(
@@ -48,9 +49,13 @@ public class ZuulServerChannelInitializer extends BaseZuulChannelInitializer {
         this(String.valueOf(port), channelConfig, channelDependencies, channels);
     }
 
+    /**
+     * 添加各种 channel handler。失活连接处理、http 报文处理、zuul filter
+     *
+     * @throws Exception
+     */
     @Override
-    protected void initChannel(Channel ch) throws Exception
-    {
+    protected void initChannel(Channel ch) throws Exception {
         // Configure our pipeline of ChannelHandlerS.
         ChannelPipeline pipeline = ch.pipeline();
 
@@ -60,6 +65,7 @@ public class ZuulServerChannelInitializer extends BaseZuulChannelInitializer {
         addTcpRelatedHandlers(pipeline);
         addHttp1Handlers(pipeline);
         addHttpRelatedHandlers(pipeline);
+        // 将 zuul filter 添加到 pipeline
         addZuulHandlers(pipeline);
     }
 }

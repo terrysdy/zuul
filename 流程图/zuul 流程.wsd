@@ -1,0 +1,153 @@
+@startuml
+
+participant Client as "Client"
+participant Guice as "Guice"
+participant ServerStartup as "ServerStartup"
+participant Server as "Server"
+participant ChannelInitializer as "ChannelInitializer"
+participant ZuulFilterChainHandler as "ZuulFilterChainHandler"
+participant ZuulFilterChainRunner as "ZuulFilterChainRunner"
+participant ZuulEndPointRunner as "ZuulEndPointRunner"
+participant ProxyEndpoint as "ProxyEndpoint"
+participant NettyOrigin as "NettyOrigin"
+participant ClientChannelManager as "ClientChannelManager"
+participant LoadBalancer as "LoadBalancer"
+participant PerServerConnectionPool as "PerServerConnectionPool"
+participant NettyClientConnectionFactory as "NettyClientConnectionFactory"
+participant ClientResponseWriter as "ClientResponseWriter"
+participant Netty as "Netty"
+participant Origin as "Origin Server"
+
+
+Guice -> ServerStartup: init()
+activate ServerStartup
+  ServerStartup -> ServerStartup: chooseAddrsAndChannels()
+  note left
+    1. 读取配置 port
+    2. 读取配置 channel 相关配置，连接数、并发数..
+    3. 根据 serverType（http、http2、sse、websocket..）建立 port --> 对应 ChannelInitializer 映射
+      1. ChannelInitializer 实现 initChannel 方法，channel 初始化时，将对应的 channel handler（tcp、http、业务 filter） 添加到 pipeline
+  end note
+  ServerStartup -> ServerStartup: 其他信息初始化
+  note left: destroy 钩子、统计、状态管理..
+  ServerStartup -> ServerStartup: new Server()
+deactivate ServerStartup
+
+activate Server
+  Server -> Server: start()
+  Server -> Server: 设置 netty ServerBootstrap 信息
+  note left: acceptor 线程数、worker 线程数、channel 类型（nio、epoll、kQueue..）
+  Server -> Server: bind netty ServerBootstrap，开启监听
+deactivate Server
+
+Client -> Netty: 建立连接
+Netty -> ChannelInitializer: initChannel()
+activate ChannelInitializer
+  ChannelInitializer -> ChannelInitializer: 保存 Channel
+  ChannelInitializer -> ChannelInitializer: 添加 server 相关 channel handler
+  note left: tcp、http、失活连接... channel handler
+  ChannelInitializer -> ChannelInitializer: 添加 zuul filter channel handler
+  note left
+    1. 从 filterLoader 中获取各类 filter 实例（inBound、endPoint、outBound），filterLoader 负责编译 filter 代码生成实例，且作为 filter 容器
+    2. 将 filter 列表组装成 ZuulFilterChainRunner（filter chain 门板），Runner 中持有 nextStage Runner，定义 Runner 顺序
+      1. RequestRunner(持有 inBound filter 链) -> EndPointRunner(执行与 origin server 真实 tcp 通信) -> ReponseRunner(持有 outBound filter 链)
+    3. 创建 ZuulFilterChainHandler 适配器，持有 Runner，适配 netty ChannelInboundHandler
+    4. 将 ZuulFilterChainHandler 添加进 pipeline
+  end note
+deactivate ChannelInitializer
+
+Client -> Netty: 发送请求
+Netty -> ZuulFilterChainHandler: channelRead()
+note left: channel pipeline 执行 channel handler 链，经 http、zuul Request 拼接等到 ZuulFilterChainHandler
+activate ZuulFilterChainHandler
+  ZuulFilterChainHandler -> ZuulFilterChainRunner: filter()
+  note left: inBound filter 逻辑
+  activate ZuulFilterChainRunner
+    ZuulFilterChainRunner -> ZuulFilterChainRunner: runFilters()
+    note left
+      1. 执行 Inbound filter 链
+      2. invokeNextStage() 即 endpoint（ZuulEndPointRunner）
+    end note
+    ZuulFilterChainRunner -> ZuulEndPointRunner: filter()
+    note left: invokeNextStage()
+
+    activate ZuulEndPointRunner
+      ZuulFilterChainRunner -> ZuulFilterChainRunner: getEndpoint()
+      note left: 根据 zuulRequest 创建 ProxyEndpoint
+      ZuulFilterChainRunner -> ProxyEndpoint: apply()
+      note left
+        ZuulFilterChainRunner 通用逻辑，调用 filter 的 apply()
+        ProxyEndpoint 连接 inBound filter、origin server、outBound filter
+          1. 将 inBound filter 处理后请求发给 origin server
+          2. 将 origin server 接收响应传给 outBound filter
+      end note
+      activate ProxyEndpoint
+
+        ProxyEndpoint -> ProxyEndpoint: 调用 origin server 计数
+        ProxyEndpoint -> NettyOrigin: connectToOrigin()
+        note left: 与 origin server 建立连接，设置当前 endpoint 选中的 origin server
+
+        activate NettyOrigin
+          NettyOrigin -> ClientChannelManager: acquire()
+          note left: ClientChannelManager 中维护 origin Map<server,连接池>，全局唯一
+          activate ClientChannelManager
+            ClientChannelManager -> LoadBalancer: chooseServer()，负载均衡选择 origin server
+            ClientChannelManager -> ClientChannelManager: 设置从 endpoint 中传递的 slectedServer
+            ClientChannelManager -> ClientChannelManager: 获取/创建 origin server 对应的连接池
+            ClientChannelManager -> PerServerConnectionPool: acquire()
+            note left: PerServerConnectionPool 表示每个 origin server 的连接池，维护了 Map<eventLoop,queue<PooledConnection>>
+            activate PerServerConnectionPool
+              PerServerConnectionPool -> Netty: newPromise()
+              note left: eventLoop.newPromise()
+              PerServerConnectionPool -> PerServerConnectionPool: 尝试从对应 queue 获取连接
+              PerServerConnectionPool -> NettyClientConnectionFactory: connect()
+              note left: 创建 netty Bootstrap，调用 connect()，与 origin server 建立连接，DefaultOriginChannelInitializer 组织 channel handler
+            deactivate PerServerConnectionPool
+          deactivate ClientChannelManager
+        deactivate NettyOrigin
+
+        Netty -> ProxyEndpoint: operationComplete()
+        note left: 与 origin server 连接建立成功
+        ProxyEndpoint -> ProxyEndpoint: 将处理 origin server 响应的 channel handler 添加到 pipeline
+        note left: handler 为 OriginResponseReceiver，接收响应后交给 ProxyEndpoint 处理
+        ProxyEndpoint -> ProxyEndpoint: writeClientRequestToOrigin()
+        note left: 调用 channel.write()、channel.flush() 发送数据
+
+      deactivate ProxyEndpoint
+    deactivate ZuulEndPointRunner
+  deactivate ZuulFilterChainRunner
+deactivate ZuulFilterChainHandler
+
+
+Origin -> Netty: 响应数据
+Netty -> ProxyEndpoint: responseFromOrigin()
+note left
+  接收响应 channel handler 处理 http 相关
+  OriginResponseReceiver 接收响应传给 ProxyEndpoint 处理
+end note
+activate ProxyEndpoint
+  ProxyEndpoint -> ProxyEndpoint: 更新统计信息
+  ProxyEndpoint -> ProxyEndpoint: 根据响应构建 zuulResponse
+  ProxyEndpoint -> ZuulFilterChainRunner: filter()
+  note left
+    1. endpoint 持有 outBound filter runner，调用 filter()，执行响应业务处理
+    2. outBound filter 链执行
+  end note
+  ZuulFilterChainRunner -> ZuulFilterChainRunner: invokeNextStage()
+  ZuulFilterChainRunner -> Netty: fireChannelRead()
+  note left: outBound runner 的 nextStage 为空，fireChannelRead({response})
+  activate ClientResponseWriter
+    ClientResponseWriter -> Netty: write()、flush()
+    note left
+      1. ClientResponseWriter 为 pipeline 里最后一个 inBound channel handler
+      2. outBound filter 处理后调用 channel.fireChannelRead()，触发 read()
+      3. read() 中把 response write 进 channel，开始 netty outBound channel handler 处理
+      4. 后续 channel handler 处理 http 报文、统计等..
+    end note
+  deactivate ClientResponseWriter
+deactivate ProxyEndpoint
+
+Netty -> Client: 响应数据
+
+
+@enduml

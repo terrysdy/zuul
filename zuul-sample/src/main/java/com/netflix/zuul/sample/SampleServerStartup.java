@@ -53,7 +53,7 @@ import java.util.Map;
 
 /**
  * Sample Server Startup - class that configures the Netty server startup settings
- *
+ * <p>
  * Author: Arthur Gonigberg
  * Date: November 20, 2017
  */
@@ -68,48 +68,59 @@ public class SampleServerStartup extends BaseServerStartup {
         SSE
     }
 
-    private static final String[] WWW_PROTOCOLS = new String[]{"TLSv1.2", "TLSv1.1", "TLSv1", "SSLv3"};
+    private static final String[] WWW_PROTOCOLS = new String[] { "TLSv1.2", "TLSv1.1", "TLSv1",
+            "SSLv3" };
     private static final ServerType SERVER_TYPE = ServerType.HTTP;
     private final PushConnectionRegistry pushConnectionRegistry;
     private final SamplePushMessageSenderInitializer pushSenderInitializer;
 
     @Inject
     public SampleServerStartup(ServerStatusManager serverStatusManager, FilterLoader filterLoader,
-                               SessionContextDecorator sessionCtxDecorator, FilterUsageNotifier usageNotifier,
-                               RequestCompleteHandler reqCompleteHandler, Registry registry,
-                               DirectMemoryMonitor directMemoryMonitor, EventLoopGroupMetrics eventLoopGroupMetrics,
-                               EurekaClient discoveryClient, ApplicationInfoManager applicationInfoManager,
-                               AccessLogPublisher accessLogPublisher, PushConnectionRegistry pushConnectionRegistry,
-                               SamplePushMessageSenderInitializer pushSenderInitializer) {
-        super(serverStatusManager, filterLoader, sessionCtxDecorator, usageNotifier, reqCompleteHandler, registry,
+            SessionContextDecorator sessionCtxDecorator, FilterUsageNotifier usageNotifier,
+            RequestCompleteHandler reqCompleteHandler, Registry registry,
+            DirectMemoryMonitor directMemoryMonitor, EventLoopGroupMetrics eventLoopGroupMetrics,
+            EurekaClient discoveryClient, ApplicationInfoManager applicationInfoManager,
+            AccessLogPublisher accessLogPublisher, PushConnectionRegistry pushConnectionRegistry,
+            SamplePushMessageSenderInitializer pushSenderInitializer) {
+        super(serverStatusManager, filterLoader, sessionCtxDecorator, usageNotifier,
+                reqCompleteHandler, registry,
                 directMemoryMonitor, eventLoopGroupMetrics, discoveryClient, applicationInfoManager,
                 accessLogPublisher);
         this.pushConnectionRegistry = pushConnectionRegistry;
         this.pushSenderInitializer = pushSenderInitializer;
     }
 
+    /**
+     * 建议 port --> ChannelInitializer 映射
+     * 不同类型 server ChannelInitializer init() 方法，将对应的 channel handler 添加到 pipeline
+     */
     @Override
-    protected Map<SocketAddress, ChannelInitializer<?>> chooseAddrsAndChannels(ChannelGroup clientChannels) {
+    protected Map<SocketAddress, ChannelInitializer<?>> chooseAddrsAndChannels(
+            ChannelGroup clientChannels) {
         Map<SocketAddress, ChannelInitializer<?>> addrsToChannels = new HashMap<>();
 
         String mainPortName = "main";
         int port = new DynamicIntProperty("zuul.server.port.main", 7001).get();
         SocketAddress sockAddr = new InetSocketAddress(port);
 
+        // channel config，连接数、并发数...
         ChannelConfig channelConfig = defaultChannelConfig(mainPortName);
         int pushPort = new DynamicIntProperty("zuul.server.port.http.push", 7008).get();
         ServerSslConfig sslConfig;
         ChannelConfig channelDependencies = defaultChannelDependencies(mainPortName);
 
-        /* These settings may need to be tweaked depending if you're running behind an ELB HTTP listener, TCP listener,
+        /* These settings may need to be tweaked depending if you're running behind an ELB HTTP
+        listener, TCP listener,
          * or directly on the internet.
          */
         switch (SERVER_TYPE) {
-            /* The below settings can be used when running behind an ELB HTTP listener that terminates SSL for you
+            /* The below settings can be used when running behind an ELB HTTP listener that
+            terminates SSL for you
              * and passes XFF headers.
              */
             case HTTP:
-                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen, StripUntrustedProxyHeadersHandler.AllowWhen.ALWAYS);
+                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen,
+                        StripUntrustedProxyHeadersHandler.AllowWhen.ALWAYS);
                 channelConfig.set(CommonChannelConfigKeys.preferProxyProtocolForClientIp, false);
                 channelConfig.set(CommonChannelConfigKeys.isSSlFromIntermediary, false);
                 channelConfig.set(CommonChannelConfigKeys.withProxyProtocol, false);
@@ -117,11 +128,13 @@ public class SampleServerStartup extends BaseServerStartup {
                 addrsToChannels.put(
                         sockAddr,
                         new ZuulServerChannelInitializer(
-                                String.valueOf(port), channelConfig, channelDependencies, clientChannels));
+                                String.valueOf(port), channelConfig, channelDependencies,
+                                clientChannels));
                 logAddrConfigured(sockAddr);
                 break;
 
-            /* The below settings can be used when running behind an ELB TCP listener with proxy protocol, terminating
+            /* The below settings can be used when running behind an ELB TCP listener with proxy
+            protocol, terminating
              * SSL in Zuul.
              */
             case HTTP2:
@@ -130,26 +143,31 @@ public class SampleServerStartup extends BaseServerStartup {
                         loadFromResources("server.key"),
                         WWW_PROTOCOLS);
 
-                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen, StripUntrustedProxyHeadersHandler.AllowWhen.NEVER);
+                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen,
+                        StripUntrustedProxyHeadersHandler.AllowWhen.NEVER);
                 channelConfig.set(CommonChannelConfigKeys.preferProxyProtocolForClientIp, true);
                 channelConfig.set(CommonChannelConfigKeys.isSSlFromIntermediary, false);
                 channelConfig.set(CommonChannelConfigKeys.serverSslConfig, sslConfig);
-                channelConfig.set(CommonChannelConfigKeys.sslContextFactory, new BaseSslContextFactory(registry, sslConfig));
+                channelConfig.set(CommonChannelConfigKeys.sslContextFactory,
+                        new BaseSslContextFactory(registry, sslConfig));
 
                 addHttp2DefaultConfig(channelConfig, mainPortName);
 
                 addrsToChannels.put(
                         sockAddr,
                         new Http2SslChannelInitializer(
-                                String.valueOf(port), channelConfig, channelDependencies, clientChannels));
+                                String.valueOf(port), channelConfig, channelDependencies,
+                                clientChannels));
                 logAddrConfigured(sockAddr, sslConfig);
                 break;
 
-            /* The below settings can be used when running behind an ELB TCP listener with proxy protocol, terminating
+            /* The below settings can be used when running behind an ELB TCP listener with proxy
+            protocol, terminating
              * SSL in Zuul.
              *
              * Can be tested using certs in resources directory:
-             *  curl https://localhost:7001/test -vk --cert src/main/resources/ssl/client.cert:zuul123 --key src/main/resources/ssl/client.key
+             *  curl https://localhost:7001/test -vk --cert src/main/resources/ssl/client
+             *  .cert:zuul123 --key src/main/resources/ssl/client.key
              */
             case HTTP_MUTUAL_TLS:
                 sslConfig = new ServerSslConfig(
@@ -163,69 +181,82 @@ public class SampleServerStartup extends BaseServerStartup {
                         loadFromResources("truststore.key"),
                         false);
 
-                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen, StripUntrustedProxyHeadersHandler.AllowWhen.NEVER);
+                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen,
+                        StripUntrustedProxyHeadersHandler.AllowWhen.NEVER);
                 channelConfig.set(CommonChannelConfigKeys.preferProxyProtocolForClientIp, true);
                 channelConfig.set(CommonChannelConfigKeys.isSSlFromIntermediary, false);
                 channelConfig.set(CommonChannelConfigKeys.withProxyProtocol, true);
                 channelConfig.set(CommonChannelConfigKeys.serverSslConfig, sslConfig);
-                channelConfig.set(CommonChannelConfigKeys.sslContextFactory, new BaseSslContextFactory(registry, sslConfig));
+                channelConfig.set(CommonChannelConfigKeys.sslContextFactory,
+                        new BaseSslContextFactory(registry, sslConfig));
 
                 addrsToChannels.put(
                         sockAddr,
                         new Http1MutualSslChannelInitializer(
-                                String.valueOf(port), channelConfig, channelDependencies, clientChannels));
+                                String.valueOf(port), channelConfig, channelDependencies,
+                                clientChannels));
                 logAddrConfigured(sockAddr, sslConfig);
                 break;
 
-            /* Settings to be used when running behind an ELB TCP listener with proxy protocol as a Push notification
+            /* Settings to be used when running behind an ELB TCP listener with proxy protocol as
+             a Push notification
              * server using WebSockets */
             case WEBSOCKET:
-                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen, StripUntrustedProxyHeadersHandler.AllowWhen.NEVER);
+                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen,
+                        StripUntrustedProxyHeadersHandler.AllowWhen.NEVER);
                 channelConfig.set(CommonChannelConfigKeys.preferProxyProtocolForClientIp, true);
                 channelConfig.set(CommonChannelConfigKeys.isSSlFromIntermediary, false);
                 channelConfig.set(CommonChannelConfigKeys.withProxyProtocol, true);
 
-                channelDependencies.set(ZuulDependencyKeys.pushConnectionRegistry, pushConnectionRegistry);
+                channelDependencies.set(ZuulDependencyKeys.pushConnectionRegistry,
+                        pushConnectionRegistry);
 
                 addrsToChannels.put(
                         sockAddr,
                         new SampleWebSocketPushChannelInitializer(
-                                String.valueOf(port), channelConfig, channelDependencies, clientChannels));
+                                String.valueOf(port), channelConfig, channelDependencies,
+                                clientChannels));
                 logAddrConfigured(sockAddr);
 
-                {
-                    // port to accept push message from the backend, should be accessible on internal network only.
-                    SocketAddress pushSocketAddr = new InetSocketAddress(pushPort);
-                    addrsToChannels.put(pushSocketAddr, pushSenderInitializer);
-                    logAddrConfigured(pushSocketAddr);
-                }
+            {
+                // port to accept push message from the backend, should be accessible on internal
+                // network only.
+                SocketAddress pushSocketAddr = new InetSocketAddress(pushPort);
+                addrsToChannels.put(pushSocketAddr, pushSenderInitializer);
+                logAddrConfigured(pushSocketAddr);
+            }
 
-                break;
+            break;
 
-            /* Settings to be used when running behind an ELB TCP listener with proxy protocol as a Push notification
+            /* Settings to be used when running behind an ELB TCP listener with proxy protocol as
+             a Push notification
              * server using Server Sent Events (SSE) */
             case SSE:
-                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen, StripUntrustedProxyHeadersHandler.AllowWhen.NEVER);
+                channelConfig.set(CommonChannelConfigKeys.allowProxyHeadersWhen,
+                        StripUntrustedProxyHeadersHandler.AllowWhen.NEVER);
                 channelConfig.set(CommonChannelConfigKeys.preferProxyProtocolForClientIp, true);
                 channelConfig.set(CommonChannelConfigKeys.isSSlFromIntermediary, false);
                 channelConfig.set(CommonChannelConfigKeys.withProxyProtocol, true);
 
-                channelDependencies.set(ZuulDependencyKeys.pushConnectionRegistry, pushConnectionRegistry);
+                channelDependencies.set(ZuulDependencyKeys.pushConnectionRegistry,
+                        pushConnectionRegistry);
 
                 addrsToChannels.put(
                         sockAddr,
                         new SampleSSEPushChannelInitializer(
-                                String.valueOf(port), channelConfig, channelDependencies, clientChannels));
+                                String.valueOf(port), channelConfig, channelDependencies,
+                                clientChannels));
                 logAddrConfigured(sockAddr);
 
-                {
-                    SocketAddress pushSocketAddr = new InetSocketAddress(pushPort);
-                    // port to accept push message from the backend, should be accessible on internal network only.
-                    addrsToChannels.put(pushSocketAddr, pushSenderInitializer);
-                    logAddrConfigured(pushSocketAddr);
-                }
+            {
+                SocketAddress pushSocketAddr = new InetSocketAddress(pushPort);
+                // port to accept push message from the backend, should be accessible on internal
+                // network only.
+                addrsToChannels.put(pushSocketAddr, pushSenderInitializer);
+                logAddrConfigured(pushSocketAddr);
+            }
 
-                break;
+            break;
         }
 
         return Collections.unmodifiableMap(addrsToChannels);

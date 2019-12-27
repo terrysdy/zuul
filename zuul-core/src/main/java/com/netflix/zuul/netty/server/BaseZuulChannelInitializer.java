@@ -16,6 +16,12 @@
 
 package com.netflix.zuul.netty.server;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.netflix.zuul.passport.PassportState.FILTERS_INBOUND_END;
+import static com.netflix.zuul.passport.PassportState.FILTERS_INBOUND_START;
+import static com.netflix.zuul.passport.PassportState.FILTERS_OUTBOUND_END;
+import static com.netflix.zuul.passport.PassportState.FILTERS_OUTBOUND_START;
+
 import com.netflix.config.CachedDynamicIntProperty;
 import com.netflix.netty.common.CloseOnIdleStateHandler;
 import com.netflix.netty.common.Http1ConnectionCloseHandler;
@@ -34,7 +40,6 @@ import com.netflix.netty.common.metrics.PerEventLoopMetricsChannelHandler;
 import com.netflix.netty.common.metrics.ServerChannelMetrics;
 import com.netflix.netty.common.proxyprotocol.ElbProxyProtocolChannelHandler;
 import com.netflix.netty.common.proxyprotocol.StripUntrustedProxyHeadersHandler;
-import com.netflix.netty.common.status.ServerStatusManager;
 import com.netflix.netty.common.throttle.MaxInboundConnectionsHandler;
 import com.netflix.servo.monitor.BasicCounter;
 import com.netflix.spectator.api.Registry;
@@ -66,39 +71,45 @@ import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.AttributeKey;
-
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.netflix.zuul.passport.PassportState.*;
 
 /**
  * User: Mike Smith
  * Date: 3/5/16
  * Time: 6:26 PM
  */
-public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Channel>
-{
+public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Channel> {
+
     public static final String HTTP_CODEC_HANDLER_NAME = "codec";
-    public static final AttributeKey<ChannelConfig> ATTR_CHANNEL_CONFIG = AttributeKey.newInstance("channel_config");
+    public static final AttributeKey<ChannelConfig> ATTR_CHANNEL_CONFIG = AttributeKey.newInstance(
+            "channel_config");
 
-    protected static final LoggingHandler nettyLogger = new LoggingHandler("zuul.server.nettylog", LogLevel.INFO);
+    protected static final LoggingHandler nettyLogger = new LoggingHandler("zuul.server.nettylog",
+            LogLevel.INFO);
 
-    public static final CachedDynamicIntProperty MAX_INITIAL_LINE_LENGTH = new CachedDynamicIntProperty("server.http.decoder.maxInitialLineLength", 16384);
-    public static final CachedDynamicIntProperty MAX_HEADER_SIZE = new CachedDynamicIntProperty("server.http.decoder.maxHeaderSize", 32768);
-    public static final CachedDynamicIntProperty MAX_CHUNK_SIZE = new CachedDynamicIntProperty("server.http.decoder.maxChunkSize", 32768);
+    public static final CachedDynamicIntProperty MAX_INITIAL_LINE_LENGTH =
+            new CachedDynamicIntProperty(
+                    "server.http.decoder.maxInitialLineLength", 16384);
+    public static final CachedDynamicIntProperty MAX_HEADER_SIZE = new CachedDynamicIntProperty(
+            "server.http.decoder.maxHeaderSize", 32768);
+    public static final CachedDynamicIntProperty MAX_CHUNK_SIZE = new CachedDynamicIntProperty(
+            "server.http.decoder.maxChunkSize", 32768);
 
     /**
-     * The port that the server intends to listen on.  Subclasses should NOT use this field, as it may not be set, and
+     * The port that the server intends to listen on.  Subclasses should NOT use this field, as it
+     * may not be set, and
      * may differ from the actual listening port.  For example:
      *
      * <ul>
-     *     <li>When binding the server to port `0`, the actual port will be different from the one provided here.
-     *     <li>If there is no port (such as in a LocalSocket, or DomainSocket), the port number may be `-1`.
+     * <li>When binding the server to port `0`, the actual port will be different from the one
+     * provided here.
+     * <li>If there is no port (such as in a LocalSocket, or DomainSocket), the port number may be
+     * `-1`.
      * </ul>
      *
-     * <p>Instead, subclasses should read the local address on channel initialization, and decide to take action then.
+     * <p>Instead, subclasses should read the local address on channel initialization, and decide to
+     * take action then.
      */
     @Deprecated
     protected final int port;
@@ -111,7 +122,7 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
     protected final int connectionExpiry;
     protected final int maxConnections;
     private final int connCloseDelay;
-    
+
     protected final Registry registry;
     protected final ServerChannelMetrics channelMetrics;
     protected final HttpMetricsChannelHandler httpMetricsHandler;
@@ -130,11 +141,14 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
     protected final SessionContextDecorator sessionContextDecorator;
     protected final RequestCompleteHandler requestCompleteHandler;
     protected final BasicCounter httpRequestReadTimeoutCounter;
-    protected final FilterLoader filterLoader;
+    protected final FilterLoader filterLoader; // filter 容器
     protected final FilterUsageNotifier filterUsageNotifier;
     protected final SourceAddressChannelHandler sourceAddressChannelHandler;
 
-    /** A collection of all the active channels that we can use to things like graceful shutdown */
+    /**
+     * A collection of all the active channels that we can use to things like graceful shutdown
+     */
+    // channel 集合
     protected final ChannelGroup channels;
 
     /**
@@ -149,7 +163,8 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
     }
 
     /**
-     * Call {@link #BaseZuulChannelInitializer(String, ChannelConfig, ChannelConfig, ChannelGroup)} instead.
+     * Call {@link #BaseZuulChannelInitializer(String, ChannelConfig, ChannelConfig, ChannelGroup)}
+     * instead.
      */
     @Deprecated
     protected BaseZuulChannelInitializer(
@@ -177,35 +192,49 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
         this.withProxyProtocol = channelConfig.get(CommonChannelConfigKeys.withProxyProtocol);
 
         this.idleTimeout = channelConfig.get(CommonChannelConfigKeys.idleTimeout);
-        this.httpRequestReadTimeout = channelConfig.get(CommonChannelConfigKeys.httpRequestReadTimeout);
+        this.httpRequestReadTimeout = channelConfig.get(
+                CommonChannelConfigKeys.httpRequestReadTimeout);
         this.channelMetrics = new ServerChannelMetrics("http-" + metricId);
         this.registry = channelDependencies.get(ZuulDependencyKeys.registry);
-        this.httpMetricsHandler = new HttpMetricsChannelHandler(registry, "server", "http-" + metricId);
+        this.httpMetricsHandler = new HttpMetricsChannelHandler(registry, "server",
+                "http-" + metricId);
 
-        EventLoopGroupMetrics eventLoopGroupMetrics = channelDependencies.get(ZuulDependencyKeys.eventLoopGroupMetrics);
-        PerEventLoopMetricsChannelHandler perEventLoopMetricsHandler = new PerEventLoopMetricsChannelHandler(eventLoopGroupMetrics);
+        EventLoopGroupMetrics eventLoopGroupMetrics = channelDependencies.get(
+                ZuulDependencyKeys.eventLoopGroupMetrics);
+        PerEventLoopMetricsChannelHandler perEventLoopMetricsHandler =
+                new PerEventLoopMetricsChannelHandler(
+                        eventLoopGroupMetrics);
         this.perEventLoopConnectionMetricsHandler = perEventLoopMetricsHandler.new Connections();
         this.perEventLoopRequestsMetricsHandler = perEventLoopMetricsHandler.new HttpRequests();
 
         this.maxConnections = channelConfig.get(CommonChannelConfigKeys.maxConnections);
         this.maxConnectionsHandler = new MaxInboundConnectionsHandler(maxConnections);
-        this.maxRequestsPerConnection = channelConfig.get(CommonChannelConfigKeys.maxRequestsPerConnection);
-        this.maxRequestsPerConnectionInBrownout = channelConfig.get(CommonChannelConfigKeys.maxRequestsPerConnectionInBrownout);
+        this.maxRequestsPerConnection = channelConfig.get(
+                CommonChannelConfigKeys.maxRequestsPerConnection);
+        this.maxRequestsPerConnectionInBrownout = channelConfig.get(
+                CommonChannelConfigKeys.maxRequestsPerConnectionInBrownout);
         this.connectionExpiry = channelConfig.get(CommonChannelConfigKeys.connectionExpiry);
         this.connCloseDelay = channelConfig.get(CommonChannelConfigKeys.connCloseDelay);
 
-        StripUntrustedProxyHeadersHandler.AllowWhen allowProxyHeadersWhen = channelConfig.get(CommonChannelConfigKeys.allowProxyHeadersWhen);
-        this.stripInboundProxyHeadersHandler = new StripUntrustedProxyHeadersHandler(allowProxyHeadersWhen);
+        StripUntrustedProxyHeadersHandler.AllowWhen allowProxyHeadersWhen = channelConfig.get(
+                CommonChannelConfigKeys.allowProxyHeadersWhen);
+        this.stripInboundProxyHeadersHandler = new StripUntrustedProxyHeadersHandler(
+                allowProxyHeadersWhen);
 
-        this.rateLimitingChannelHandler = channelDependencies.get(ZuulDependencyKeys.rateLimitingChannelHandlerProvider).get();
+        this.rateLimitingChannelHandler = channelDependencies.get(
+                ZuulDependencyKeys.rateLimitingChannelHandlerProvider).get();
 
-        this.sslClientCertCheckChannelHandler = channelDependencies.get(ZuulDependencyKeys.sslClientCertCheckChannelHandlerProvider).get();
+        this.sslClientCertCheckChannelHandler = channelDependencies.get(
+                ZuulDependencyKeys.sslClientCertCheckChannelHandlerProvider).get();
 
         this.passportLoggingHandler = new PassportLoggingHandler(registry);
 
-        this.sessionContextDecorator = channelDependencies.get(ZuulDependencyKeys.sessionCtxDecorator);
-        this.requestCompleteHandler = channelDependencies.get(ZuulDependencyKeys.requestCompleteHandler);
-        this.httpRequestReadTimeoutCounter = channelDependencies.get(ZuulDependencyKeys.httpRequestReadTimeoutCounter);
+        this.sessionContextDecorator = channelDependencies.get(
+                ZuulDependencyKeys.sessionCtxDecorator);
+        this.requestCompleteHandler = channelDependencies.get(
+                ZuulDependencyKeys.requestCompleteHandler);
+        this.httpRequestReadTimeoutCounter = channelDependencies.get(
+                ZuulDependencyKeys.httpRequestReadTimeoutCounter);
 
         this.filterLoader = channelDependencies.get(ZuulDependencyKeys.filterLoader);
         this.filterUsageNotifier = channelDependencies.get(ZuulDependencyKeys.filterUsageNotifier);
@@ -213,11 +242,11 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
         this.sourceAddressChannelHandler = new SourceAddressChannelHandler();
     }
 
-    protected void storeChannel(Channel ch)
-    {
+    protected void storeChannel(Channel ch) {
         this.channels.add(ch);
 
-        // Also add the ChannelConfig as an attribute on each channel. So interested filters/channel-handlers can introspect
+        // Also add the ChannelConfig as an attribute on each channel. So interested
+        // filters/channel-handlers can introspect
         // and potentially act differently based on the config.
         ch.attr(ATTR_CHANNEL_CONFIG).set(channelConfig);
     }
@@ -227,9 +256,8 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
         pipeline.addLast(new PassportStateServerHandler.InboundHandler());
         pipeline.addLast(new PassportStateServerHandler.OutboundHandler());
     }
-    
-    protected void addTcpRelatedHandlers(ChannelPipeline pipeline)
-    {
+
+    protected void addTcpRelatedHandlers(ChannelPipeline pipeline) {
         pipeline.addLast(sourceAddressChannelHandler);
         pipeline.addLast("channelMetrics", channelMetrics);
         pipeline.addLast(perEventLoopConnectionMetricsHandler);
@@ -239,17 +267,16 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
         pipeline.addLast(maxConnectionsHandler);
     }
 
-    protected void addHttp1Handlers(ChannelPipeline pipeline)
-    {
+    protected void addHttp1Handlers(ChannelPipeline pipeline) {
         pipeline.addLast(HTTP_CODEC_HANDLER_NAME, createHttpServerCodec());
 
         pipeline.addLast(new Http1ConnectionCloseHandler());
         pipeline.addLast("conn_expiry_handler",
-                new Http1ConnectionExpiryHandler(maxRequestsPerConnection, maxRequestsPerConnectionInBrownout, connectionExpiry));
+                new Http1ConnectionExpiryHandler(maxRequestsPerConnection,
+                        maxRequestsPerConnectionInBrownout, connectionExpiry));
     }
 
-    protected HttpServerCodec createHttpServerCodec()
-    {
+    protected HttpServerCodec createHttpServerCodec() {
         return new HttpServerCodec(
                 MAX_INITIAL_LINE_LENGTH.get(),
                 MAX_HEADER_SIZE.get(),
@@ -257,23 +284,26 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
                 false
         );
     }
-    
-    protected void addHttpRelatedHandlers(ChannelPipeline pipeline)
-    {
+
+    protected void addHttpRelatedHandlers(ChannelPipeline pipeline) {
         pipeline.addLast(new PassportStateHttpServerHandler.InboundHandler());
         pipeline.addLast(new PassportStateHttpServerHandler.OutboundHandler());
         if (httpRequestReadTimeout > -1) {
-            HttpRequestReadTimeoutHandler.addLast(pipeline, httpRequestReadTimeout, TimeUnit.MILLISECONDS, httpRequestReadTimeoutCounter);
+            HttpRequestReadTimeoutHandler.addLast(pipeline, httpRequestReadTimeout,
+                    TimeUnit.MILLISECONDS, httpRequestReadTimeoutCounter);
         }
-        pipeline.addLast(new HttpServerLifecycleChannelHandler.HttpServerLifecycleInboundChannelHandler());
-        pipeline.addLast(new HttpServerLifecycleChannelHandler.HttpServerLifecycleOutboundChannelHandler());
+        pipeline.addLast(
+                new HttpServerLifecycleChannelHandler.HttpServerLifecycleInboundChannelHandler());
+        pipeline.addLast(
+                new HttpServerLifecycleChannelHandler.HttpServerLifecycleOutboundChannelHandler());
         pipeline.addLast(new HttpBodySizeRecordingChannelHandler.InboundChannelHandler());
         pipeline.addLast(new HttpBodySizeRecordingChannelHandler.OutboundChannelHandler());
         pipeline.addLast(httpMetricsHandler);
         pipeline.addLast(perEventLoopRequestsMetricsHandler);
 
         if (accessLogPublisher != null) {
-            pipeline.addLast(new AccessLogChannelHandler.AccessLogInboundChannelHandler(accessLogPublisher));
+            pipeline.addLast(
+                    new AccessLogChannelHandler.AccessLogInboundChannelHandler(accessLogPublisher));
             pipeline.addLast(new AccessLogChannelHandler.AccessLogOutboundChannelHandler());
         }
 
@@ -295,22 +325,22 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
         pipeline.addLast("ssl_info", new SslHandshakeInfoHandler(registry, isSSlFromIntermediary));
     }
 
-    protected void addSslClientCertChecks(ChannelPipeline pipeline)
-    {
+    protected void addSslClientCertChecks(ChannelPipeline pipeline) {
         if (channelConfig.get(ZuulDependencyKeys.SSL_CLIENT_CERT_CHECK_REQUIRED)) {
             if (this.sslClientCertCheckChannelHandler == null) {
-                throw new IllegalArgumentException("A sslClientCertCheckChannelHandler is required!");
+                throw new IllegalArgumentException(
+                        "A sslClientCertCheckChannelHandler is required!");
             }
             pipeline.addLast(this.sslClientCertCheckChannelHandler);
         }
     }
 
-    protected void addZuulHandlers(final ChannelPipeline pipeline)
-    {
+    protected void addZuulHandlers(final ChannelPipeline pipeline) {
         pipeline.addLast("logger", nettyLogger);
         pipeline.addLast(new ClientRequestReceiver(sessionContextDecorator));
         pipeline.addLast(passportLoggingHandler);
         addZuulFilterChainHandler(pipeline);
+        // 处理 outBound 处理后的响应的 channel handler 放在最后
         pipeline.addLast(new ClientResponseWriter(requestCompleteHandler, registry));
     }
 
@@ -320,11 +350,13 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
                 new OutboundPassportStampingFilter(FILTERS_OUTBOUND_END));
 
         // response filter chain
-        final ZuulFilterChainRunner<HttpResponseMessage> responseFilterChain = getFilterChainRunner(responseFilters,
+        final ZuulFilterChainRunner<HttpResponseMessage> responseFilterChain = getFilterChainRunner(
+                responseFilters,
                 filterUsageNotifier);
 
         // endpoint | response filter chain
-        final FilterRunner<HttpRequestMessage, HttpResponseMessage> endPoint = getEndpointRunner(responseFilterChain,
+        final FilterRunner<HttpRequestMessage, HttpResponseMessage> endPoint = getEndpointRunner(
+                responseFilterChain,
                 filterUsageNotifier, filterLoader);
 
         final ZuulFilter<HttpRequestMessage, HttpRequestMessage>[] requestFilters = getFilters(
@@ -332,36 +364,42 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
                 new InboundPassportStampingFilter(FILTERS_INBOUND_END));
 
         // request filter chain | end point | response filter chain
-        final ZuulFilterChainRunner<HttpRequestMessage> requestFilterChain = getFilterChainRunner(requestFilters,
+        final ZuulFilterChainRunner<HttpRequestMessage> requestFilterChain = getFilterChainRunner(
+                requestFilters,
                 filterUsageNotifier, endPoint);
 
         pipeline.addLast(new ZuulFilterChainHandler(requestFilterChain, responseFilterChain));
     }
 
-    protected ZuulEndPointRunner getEndpointRunner(ZuulFilterChainRunner<HttpResponseMessage> responseFilterChain,
-                                                   FilterUsageNotifier filterUsageNotifier, FilterLoader filterLoader) {
+    protected ZuulEndPointRunner getEndpointRunner(
+            ZuulFilterChainRunner<HttpResponseMessage> responseFilterChain,
+            FilterUsageNotifier filterUsageNotifier, FilterLoader filterLoader) {
         return new ZuulEndPointRunner(filterUsageNotifier, filterLoader, responseFilterChain);
     }
 
-    protected <T extends ZuulMessage> ZuulFilterChainRunner<T> getFilterChainRunner(ZuulFilter<T, T>[] filters,
-                                                                                    FilterUsageNotifier filterUsageNotifier) {
+    protected <T extends ZuulMessage> ZuulFilterChainRunner<T> getFilterChainRunner(
+            ZuulFilter<T, T>[] filters,
+            FilterUsageNotifier filterUsageNotifier) {
         return new ZuulFilterChainRunner<>(filters, filterUsageNotifier);
     }
 
-    protected <T extends ZuulMessage, R extends ZuulMessage> ZuulFilterChainRunner<T> getFilterChainRunner(ZuulFilter<T, T>[] filters,
-                                                                                    FilterUsageNotifier filterUsageNotifier,
-                                                                                    FilterRunner<T, R> filterRunner) {
+    protected <T extends ZuulMessage, R extends ZuulMessage> ZuulFilterChainRunner<T> getFilterChainRunner(
+            ZuulFilter<T, T>[] filters,
+            FilterUsageNotifier filterUsageNotifier,
+            FilterRunner<T, R> filterRunner) {
         return new ZuulFilterChainRunner<>(filters, filterUsageNotifier, filterRunner);
     }
 
-    public <T extends ZuulMessage> ZuulFilter<T, T> [] getFilters(final ZuulFilter start, final ZuulFilter stop) {
+    // 从 filter 容器中获取与 start、stop 同类型的所有 filter，将 start 加到最前，stop 加到最后
+    public <T extends ZuulMessage> ZuulFilter<T, T>[] getFilters(final ZuulFilter start,
+            final ZuulFilter stop) {
         final List<ZuulFilter> zuulFilters = filterLoader.getFiltersByType(start.filterType());
         final ZuulFilter[] filters = new ZuulFilter[zuulFilters.size() + 2];
         filters[0] = start;
-        for (int i=1, j=0; i < filters.length && j < zuulFilters.size(); i++,j++) {
+        for (int i = 1, j = 0; i < filters.length && j < zuulFilters.size(); i++, j++) {
             filters[i] = zuulFilters.get(j);
         }
-        filters[filters.length -1] = stop;
+        filters[filters.length - 1] = stop;
         return filters;
     }
 }

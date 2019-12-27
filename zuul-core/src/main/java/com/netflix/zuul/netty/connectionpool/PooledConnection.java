@@ -41,6 +41,7 @@ public class PooledConnection {
 
     private final Server server;
     private final Channel channel;
+    // channe
     private final ClientChannelManager channelManager;
     private final InstanceInfo serverKey;
     private final ServerStats serverStats;
@@ -74,8 +75,8 @@ public class PooledConnection {
 
     public PooledConnection(final Channel channel, final Server server, final ClientChannelManager channelManager,
                      final InstanceInfo serverKey,
-                     final ServerStats serverStats, 
-                     final Counter closeConnCounter, 
+                     final ServerStats serverStats,
+                     final Counter closeConnCounter,
                      final Counter closeWrtBusyConnCounter)
     {
         this.channel = channel;
@@ -86,7 +87,7 @@ public class PooledConnection {
         this.creationTS = System.currentTimeMillis();
         this.closeConnCounter = closeConnCounter;
         this.closeWrtBusyConnCounter = closeWrtBusyConnCounter;
-        
+
         this.connectionState = ConnectionState.WRITE_READY;
 
         // Store ourself as an attribute on the underlying Channel.
@@ -212,7 +213,7 @@ public class PooledConnection {
                 closeWrtBusyConnCounter.increment();
             }
         }
-        
+
         if (! isShouldClose() && connectionState != ConnectionState.WRITE_READY) {
             CurrentPassport passport = CurrentPassport.fromChannel(channel);
             LOG.info("Error - Attempt to put busy connection into the pool = " + this.toString()

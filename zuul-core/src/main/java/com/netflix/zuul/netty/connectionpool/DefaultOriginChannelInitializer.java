@@ -16,6 +16,8 @@
 
 package com.netflix.zuul.netty.connectionpool;
 
+import static com.netflix.zuul.netty.server.BaseZuulChannelInitializer.HTTP_CODEC_HANDLER_NAME;
+
 import com.netflix.netty.common.HttpClientLifecycleChannelHandler;
 import com.netflix.netty.common.metrics.HttpMetricsChannelHandler;
 import com.netflix.spectator.api.Registry;
@@ -30,26 +32,28 @@ import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
 
-import static com.netflix.zuul.netty.server.BaseZuulChannelInitializer.HTTP_CODEC_HANDLER_NAME;
-
 /**
  * Default Origin Channel Initializer
- *
+ * <p>
  * Author: Arthur Gonigberg
  * Date: December 01, 2017
  */
 public class DefaultOriginChannelInitializer extends OriginChannelInitializer {
+
     private final ConnectionPoolConfig connectionPoolConfig;
     private final SslContext sslContext;
+    // 处理与 origin server connection 信息，释放回连接池/关闭连接
     protected final ConnectionPoolHandler connectionPoolHandler;
     protected final HttpMetricsChannelHandler httpMetricsHandler;
     protected final LoggingHandler nettyLogger;
 
-    public DefaultOriginChannelInitializer(ConnectionPoolConfig connPoolConfig, Registry spectatorRegistry) {
+    public DefaultOriginChannelInitializer(ConnectionPoolConfig connPoolConfig,
+            Registry spectatorRegistry) {
         this.connectionPoolConfig = connPoolConfig;
         final String originName = connectionPoolConfig.getOriginName();
         this.connectionPoolHandler = new ConnectionPoolHandler(originName);
-        this.httpMetricsHandler = new HttpMetricsChannelHandler(spectatorRegistry, "client", originName);
+        this.httpMetricsHandler = new HttpMetricsChannelHandler(spectatorRegistry, "client",
+                originName);
         this.nettyLogger = new LoggingHandler("zuul.origin.nettylog." + originName, LogLevel.INFO);
         this.sslContext = getClientSslContext(spectatorRegistry);
     }
@@ -81,6 +85,7 @@ public class DefaultOriginChannelInitializer extends OriginChannelInitializer {
         pipeline.addLast(HttpClientLifecycleChannelHandler.OUTBOUND_CHANNEL_HANDLER);
         pipeline.addLast(new ClientTimeoutHandler.InboundHandler());
         pipeline.addLast(new ClientTimeoutHandler.OutboundHandler());
+
         pipeline.addLast("connectionPoolHandler", connectionPoolHandler);
     }
 
@@ -95,8 +100,9 @@ public class DefaultOriginChannelInitializer extends OriginChannelInitializer {
     }
 
     /**
-     * This method can be overridden to add your own MethodBinding handler for preserving thread locals or thread variables.
-     *
+     * This method can be overridden to add your own MethodBinding handler for preserving thread
+     * locals or thread variables.
+     * <p>
      * This should be a handler that binds downstream channelRead and userEventTriggered with the
      * MethodBinding class. It should be added using the pipeline.addLast method.
      *

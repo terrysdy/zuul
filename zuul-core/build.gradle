@@ -19,7 +19,7 @@ dependencies {
     compile 'com.fasterxml.jackson.core:jackson-databind:2.9.8'
 
     compile "com.netflix.archaius:archaius-core:0.7.5"
-    compile "com.netflix.servo:servo-core:0.7.2"
+    compile "com.netflix.servo:servo-core:0.12.21"
     compile "com.netflix.spectator:spectator-api:0.59.0"
     compile "com.netflix.netflix-commons:netflix-commons-util:0.3.0"
 

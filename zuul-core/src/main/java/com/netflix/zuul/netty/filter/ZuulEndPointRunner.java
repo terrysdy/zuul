@@ -16,6 +16,8 @@
 
 package com.netflix.zuul.netty.filter;
 
+import static com.netflix.zuul.context.CommonContextKeys.ZUUL_ENDPOINT;
+
 import com.google.common.base.Strings;
 import com.netflix.config.DynamicStringProperty;
 import com.netflix.spectator.impl.Preconditions;
@@ -24,53 +26,53 @@ import com.netflix.zuul.FilterUsageNotifier;
 import com.netflix.zuul.context.SessionContext;
 import com.netflix.zuul.filters.Endpoint;
 import com.netflix.zuul.filters.FilterType;
+import com.netflix.zuul.filters.SyncZuulFilterAdapter;
 import com.netflix.zuul.filters.ZuulFilter;
+import com.netflix.zuul.filters.endpoint.MissingEndpointHandlingFilter;
 import com.netflix.zuul.filters.endpoint.ProxyEndpoint;
 import com.netflix.zuul.message.ZuulMessage;
 import com.netflix.zuul.message.http.HttpRequestMessage;
 import com.netflix.zuul.message.http.HttpResponseMessage;
 import com.netflix.zuul.message.http.HttpResponseMessageImpl;
-import com.netflix.zuul.filters.endpoint.MissingEndpointHandlingFilter;
-import com.netflix.zuul.filters.SyncZuulFilterAdapter;
 import com.netflix.zuul.netty.server.MethodBinding;
 import io.netty.handler.codec.http.HttpContent;
 import io.perfmark.PerfMark;
+import javax.annotation.concurrent.ThreadSafe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.annotation.concurrent.ThreadSafe;
-
-import static com.netflix.zuul.context.CommonContextKeys.ZUUL_ENDPOINT;
-
 
 /**
  * This class is supposed to be thread safe and hence should not have any non final member variables
  * Created by saroskar on 5/18/17.
  */
 @ThreadSafe
-public class ZuulEndPointRunner extends BaseZuulFilterRunner<HttpRequestMessage, HttpResponseMessage> {
+public class ZuulEndPointRunner
+        extends BaseZuulFilterRunner<HttpRequestMessage, HttpResponseMessage> {
 
     private final FilterLoader filterLoader;
 
     private static Logger logger = LoggerFactory.getLogger(ZuulEndPointRunner.class);
     public static final String PROXY_ENDPOINT_FILTER_NAME = ProxyEndpoint.class.getCanonicalName();
-    public static final DynamicStringProperty DEFAULT_ERROR_ENDPOINT = new DynamicStringProperty("zuul.filters.error.default", "endpoint.ErrorResponse");
-
+    public static final DynamicStringProperty DEFAULT_ERROR_ENDPOINT = new DynamicStringProperty(
+            "zuul.filters.error.default", "endpoint.ErrorResponse");
 
     public ZuulEndPointRunner(FilterUsageNotifier usageNotifier, FilterLoader filterLoader,
-                              FilterRunner<HttpResponseMessage, HttpResponseMessage> respFilters) {
+            FilterRunner<HttpResponseMessage, HttpResponseMessage> respFilters) {
         super(FilterType.ENDPOINT, usageNotifier, respFilters);
         this.filterLoader = filterLoader;
     }
 
-    public static ZuulFilter<HttpRequestMessage, HttpResponseMessage> getEndpoint(final HttpRequestMessage zuulReq) {
+    public static ZuulFilter<HttpRequestMessage, HttpResponseMessage> getEndpoint(
+            final HttpRequestMessage zuulReq) {
         if (zuulReq != null) {
-            return (ZuulFilter<HttpRequestMessage, HttpResponseMessage>) zuulReq.getContext().get(ZUUL_ENDPOINT);
+            return (ZuulFilter<HttpRequestMessage, HttpResponseMessage>) zuulReq.getContext()
+                    .get(ZUUL_ENDPOINT);
         }
         return null;
     }
 
-    public static void setEndpoint(HttpRequestMessage zuulReq, ZuulFilter<HttpRequestMessage, HttpResponseMessage> endpoint) {
+    public static void setEndpoint(HttpRequestMessage zuulReq,
+            ZuulFilter<HttpRequestMessage, HttpResponseMessage> endpoint) {
         zuulReq.getContext().set(ZUUL_ENDPOINT, endpoint);
     }
 
@@ -89,18 +91,20 @@ public class ZuulEndPointRunner extends BaseZuulFilterRunner<HttpRequestMessage,
             Preconditions.checkNotNull(zuulReq, "input message");
             addPerfMarkTags(zuulReq);
 
-            final ZuulFilter<HttpRequestMessage, HttpResponseMessage> endpoint = getEndpoint(endpointName, zuulReq);
-            logger.debug("Got endpoint {}, UUID {}", endpoint.filterName(), zuulReq.getContext().getUUID());
+            final ZuulFilter<HttpRequestMessage, HttpResponseMessage> endpoint = getEndpoint(
+                    endpointName, zuulReq);
+            logger.debug("Got endpoint {}, UUID {}", endpoint.filterName(),
+                    zuulReq.getContext().getUUID());
             setEndpoint(zuulReq, endpoint);
             final HttpResponseMessage zuulResp = filter(endpoint, zuulReq);
 
-            if ((zuulResp != null)&&(! (endpoint instanceof ProxyEndpoint))) {
+            if ((zuulResp != null) && (!(endpoint instanceof ProxyEndpoint))) {
                 //EdgeProxyEndpoint calls invokeNextStage internally
-                logger.debug("Endpoint calling invokeNextStage, UUID {}", zuulReq.getContext().getUUID());
+                logger.debug("Endpoint calling invokeNextStage, UUID {}",
+                        zuulReq.getContext().getUUID());
                 invokeNextStage(zuulResp);
             }
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             handleException(zuulReq, endpointName, ex);
         } finally {
             PerfMark.stopTask(getClass().getName(), "filter");
@@ -131,13 +135,15 @@ public class ZuulEndPointRunner extends BaseZuulFilterRunner<HttpRequestMessage,
         PerfMark.startTask(getClass().getName(), "filterChunk");
         try {
             addPerfMarkTags(zuulReq);
-            ZuulFilter<HttpRequestMessage, HttpResponseMessage> endpoint = Preconditions.checkNotNull(
-                    getEndpoint(zuulReq), "endpoint");
+            ZuulFilter<HttpRequestMessage, HttpResponseMessage> endpoint =
+                    Preconditions.checkNotNull(
+                            getEndpoint(zuulReq), "endpoint");
             endpointName = endpoint.filterName();
 
             final HttpContent newChunk = endpoint.processContentChunk(zuulReq, chunk);
             if (newChunk != null) {
-                //Endpoints do not directly forward content chunks to next stage in the filter chain.
+                //Endpoints do not directly forward content chunks to next stage in the filter
+                // chain.
                 zuulReq.bufferBodyContents(newChunk);
 
                 //deallocate original chunk if necessary
@@ -145,13 +151,14 @@ public class ZuulEndPointRunner extends BaseZuulFilterRunner<HttpRequestMessage,
                     chunk.release();
                 }
 
-                if (isFilterAwaitingBody(zuulReq) && zuulReq.hasCompleteBody() && !(endpoint instanceof ProxyEndpoint)) {
+                if (isFilterAwaitingBody(zuulReq)
+                        && zuulReq.hasCompleteBody()
+                        && !(endpoint instanceof ProxyEndpoint)) {
                     //whole body has arrived, resume filter chain
                     invokeNextStage(filter(endpoint, zuulReq));
                 }
             }
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             handleException(zuulReq, endpointName, ex);
         } finally {
             PerfMark.stopTask(getClass().getName(), "filterChunk");
@@ -163,14 +170,16 @@ public class ZuulEndPointRunner extends BaseZuulFilterRunner<HttpRequestMessage,
             zuulCtx.setShouldSendErrorResponse(false);
             zuulCtx.setErrorResponseSent(true);
             final String errEndPointName = zuulCtx.getErrorEndpoint();
-            return (Strings.isNullOrEmpty(errEndPointName)) ? DEFAULT_ERROR_ENDPOINT.get() : errEndPointName;
+            return (Strings.isNullOrEmpty(errEndPointName)) ? DEFAULT_ERROR_ENDPOINT.get()
+                    : errEndPointName;
         } else {
             return zuulCtx.getEndpoint();
         }
     }
 
-    protected ZuulFilter<HttpRequestMessage, HttpResponseMessage> getEndpoint(final String endpointName,
-                final HttpRequestMessage zuulRequest) {
+    protected ZuulFilter<HttpRequestMessage, HttpResponseMessage> getEndpoint(
+            final String endpointName,
+            final HttpRequestMessage zuulRequest) {
         final SessionContext zuulCtx = zuulRequest.getContext();
 
         if (zuulCtx.getStaticResponse() != null) {
@@ -185,7 +194,8 @@ public class ZuulEndPointRunner extends BaseZuulFilterRunner<HttpRequestMessage,
             return newProxyEndpoint(zuulRequest);
         }
 
-        final Endpoint<HttpRequestMessage, HttpResponseMessage> filter = getEndpointFilter(endpointName);
+        final Endpoint<HttpRequestMessage, HttpResponseMessage> filter = getEndpointFilter(
+                endpointName);
         if (filter == null) {
             return new MissingEndpointHandlingFilter(endpointName);
         }
@@ -199,12 +209,16 @@ public class ZuulEndPointRunner extends BaseZuulFilterRunner<HttpRequestMessage,
      * @param zuulRequest - the request message
      * @return the proxy endpoint
      */
-    protected ZuulFilter<HttpRequestMessage, HttpResponseMessage> newProxyEndpoint(HttpRequestMessage zuulRequest) {
-        return new ProxyEndpoint(zuulRequest, getChannelHandlerContext(zuulRequest), getNextStage(), MethodBinding.NO_OP_BINDING);
+    protected ZuulFilter<HttpRequestMessage, HttpResponseMessage> newProxyEndpoint(
+            HttpRequestMessage zuulRequest) {
+        return new ProxyEndpoint(zuulRequest, getChannelHandlerContext(zuulRequest), getNextStage(),
+                MethodBinding.NO_OP_BINDING);
     }
 
-    protected <I extends ZuulMessage, O extends ZuulMessage> Endpoint<I, O> getEndpointFilter(String endpointName) {
-        return (Endpoint<I, O>) filterLoader.getFilterByNameAndType(endpointName, FilterType.ENDPOINT);
+    protected <I extends ZuulMessage, O extends ZuulMessage> Endpoint<I, O> getEndpointFilter(
+            String endpointName) {
+        return (Endpoint<I, O>) filterLoader.getFilterByNameAndType(endpointName,
+                FilterType.ENDPOINT);
     }
 
     final protected static ZuulFilter<HttpRequestMessage, HttpResponseMessage> STATIC_RESPONSE_ENDPOINT = new SyncZuulFilterAdapter<HttpRequestMessage, HttpResponseMessage>() {
@@ -225,5 +239,4 @@ public class ZuulEndPointRunner extends BaseZuulFilterRunner<HttpRequestMessage,
             return HttpResponseMessageImpl.defaultErrorResponse(input);
         }
     };
-
 }

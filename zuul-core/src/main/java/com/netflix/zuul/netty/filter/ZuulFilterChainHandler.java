@@ -16,7 +16,19 @@
 
 package com.netflix.zuul.netty.filter;
 
+import static com.netflix.netty.common.HttpLifecycleChannelHandler.CompleteReason.SESSION_COMPLETE;
+import static com.netflix.zuul.context.CommonContextKeys.NETTY_SERVER_CHANNEL_HANDLER_CONTEXT;
+import static com.netflix.zuul.context.CommonContextKeys.ZUUL_FILTER_CHAIN;
+import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_CLIENT_CANCELLED;
+import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_CLIENT_PIPELINE_REJECT;
+import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_CLIENT_TIMEOUT;
+import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_LOCAL;
+import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_LOCAL_IDLE_TIMEOUT;
+
 import com.google.common.base.Preconditions;
+import com.netflix.netty.common.HttpLifecycleChannelHandler;
+import com.netflix.netty.common.HttpLifecycleChannelHandler.CompleteEvent;
+import com.netflix.netty.common.HttpRequestReadTimeoutEvent;
 import com.netflix.zuul.context.SessionContext;
 import com.netflix.zuul.filters.ZuulFilter;
 import com.netflix.zuul.filters.endpoint.ProxyEndpoint;
@@ -33,24 +45,12 @@ import io.netty.channel.unix.Errors;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.ReferenceCountUtil;
-import com.netflix.netty.common.HttpLifecycleChannelHandler;
-import com.netflix.netty.common.HttpLifecycleChannelHandler.CompleteEvent;
-import com.netflix.netty.common.HttpRequestReadTimeoutEvent;
+import java.nio.channels.ClosedChannelException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.channels.ClosedChannelException;
-
-import static com.netflix.netty.common.HttpLifecycleChannelHandler.CompleteReason.SESSION_COMPLETE;
-import static com.netflix.zuul.context.CommonContextKeys.NETTY_SERVER_CHANNEL_HANDLER_CONTEXT;
-import static com.netflix.zuul.context.CommonContextKeys.ZUUL_FILTER_CHAIN;
-import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_CLIENT_CANCELLED;
-import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_CLIENT_PIPELINE_REJECT;
-import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_CLIENT_TIMEOUT;
-import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_LOCAL;
-import static com.netflix.zuul.stats.status.ZuulStatusCategory.FAILURE_LOCAL_IDLE_TIMEOUT;
-
 /**
+ * zuul filter 与 netty channel handler 适配器，在 http 解析后 read
  * Created by saroskar on 5/18/17.
  */
 public class ZuulFilterChainHandler extends ChannelInboundHandlerAdapter {
@@ -61,29 +61,28 @@ public class ZuulFilterChainHandler extends ChannelInboundHandlerAdapter {
 
     private static final Logger LOG = LoggerFactory.getLogger(ZuulFilterChainHandler.class);
 
-
     public ZuulFilterChainHandler(ZuulFilterChainRunner<HttpRequestMessage> requestFilterChain,
-                                  ZuulFilterChainRunner<HttpResponseMessage> responseFilterChain) {
-        this.requestFilterChain = Preconditions.checkNotNull(requestFilterChain, "request filter chain");
-        this.responseFilterChain = Preconditions.checkNotNull(responseFilterChain, "response filter chain");
+            ZuulFilterChainRunner<HttpResponseMessage> responseFilterChain) {
+        this.requestFilterChain = Preconditions.checkNotNull(requestFilterChain,
+                "request filter chain");
+        this.responseFilterChain = Preconditions.checkNotNull(responseFilterChain,
+                "response filter chain");
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         if (msg instanceof HttpRequestMessage) {
-            zuulRequest = (HttpRequestMessage)msg;
+            zuulRequest = (HttpRequestMessage) msg;
 
-            //Replace NETTY_SERVER_CHANNEL_HANDLER_CONTEXT in SessionContext
+            // zuul 所有 filter 处理之前，将 netty ChannelHandlerContext 放进 zuul Context
             final SessionContext zuulCtx = zuulRequest.getContext();
             zuulCtx.put(NETTY_SERVER_CHANNEL_HANDLER_CONTEXT, ctx);
             zuulCtx.put(ZUUL_FILTER_CHAIN, requestFilterChain);
 
             requestFilterChain.filter(zuulRequest);
-        }
-        else if ((msg instanceof HttpContent)&&(zuulRequest != null)) {
+        } else if ((msg instanceof HttpContent) && (zuulRequest != null)) {
             requestFilterChain.filter(zuulRequest, (HttpContent) msg);
-        }
-        else {
+        } else {
             LOG.debug("Received unrecognized message type. " + msg.getClass().getName());
             ReferenceCountUtil.release(msg);
         }
@@ -92,37 +91,35 @@ public class ZuulFilterChainHandler extends ChannelInboundHandlerAdapter {
     @Override
     public final void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
         if (evt instanceof CompleteEvent) {
-            final CompleteEvent completeEvent = (CompleteEvent)evt;
+            final CompleteEvent completeEvent = (CompleteEvent) evt;
             fireEndpointFinish(completeEvent.getReason() != SESSION_COMPLETE);
-        }
-        else if (evt instanceof HttpRequestReadTimeoutEvent) {
+        } else if (evt instanceof HttpRequestReadTimeoutEvent) {
             sendResponse(FAILURE_CLIENT_TIMEOUT, 408, ctx);
-        }
-        else if (evt instanceof IdleStateEvent) {
+        } else if (evt instanceof IdleStateEvent) {
             sendResponse(FAILURE_LOCAL_IDLE_TIMEOUT, 504, ctx);
-        }
-        else if (evt instanceof RequestCancelledEvent) {
+        } else if (evt instanceof RequestCancelledEvent) {
             if (zuulRequest != null) {
-                StatusCategoryUtils.storeStatusCategoryIfNotAlreadyFailure(zuulRequest.getContext(), FAILURE_CLIENT_CANCELLED);
+                StatusCategoryUtils.storeStatusCategoryIfNotAlreadyFailure(zuulRequest.getContext(),
+                        FAILURE_CLIENT_CANCELLED);
             }
             fireEndpointFinish(true);
             ctx.close();
-        }
-        else if (evt instanceof HttpLifecycleChannelHandler.RejectedPipeliningEvent) {
+        } else if (evt instanceof HttpLifecycleChannelHandler.RejectedPipeliningEvent) {
             sendResponse(FAILURE_CLIENT_PIPELINE_REJECT, 400, ctx);
         }
 
         super.userEventTriggered(ctx, evt);
     }
 
-    private void sendResponse(final StatusCategory statusCategory, final int status, ChannelHandlerContext ctx) {
+    private void sendResponse(final StatusCategory statusCategory, final int status,
+            ChannelHandlerContext ctx) {
         if (zuulRequest == null) {
             ctx.close();
-        }
-        else {
+        } else {
             final SessionContext zuulCtx = zuulRequest.getContext();
             StatusCategoryUtils.storeStatusCategoryIfNotAlreadyFailure(zuulCtx, statusCategory);
-            final HttpResponseMessage zuulResponse = new HttpResponseMessageImpl(zuulCtx, zuulRequest, status);
+            final HttpResponseMessage zuulResponse = new HttpResponseMessageImpl(zuulCtx,
+                    zuulRequest, status);
             final Headers headers = zuulResponse.getHeaders();
             headers.add("Connection", "close");
             headers.add("Content-Length", "0");
@@ -147,7 +144,8 @@ public class ZuulFilterChainHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-        LOG.error("zuul filter chain handler caught exception. cause=" + String.valueOf(cause), cause);
+        LOG.error("zuul filter chain handler caught exception. cause=" + String.valueOf(cause),
+                cause);
         if (zuulRequest != null && !isClientChannelClosed(cause)) {
             final SessionContext zuulCtx = zuulRequest.getContext();
             zuulCtx.setError(cause);
@@ -158,7 +156,6 @@ public class ZuulFilterChainHandler extends ChannelInboundHandlerAdapter {
             ctx.close();
         }
     }
-
 
     // Race condition: channel.isActive() did not catch
     // channel close..resulting in an i/o exception

@@ -32,19 +32,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * This class is supposed to be thread safe and hence should not have any non final member variables
- * Created by saroskar on 5/17/17.
+ * Created by saroskar on 5/17/17. //  filter chain 链
  */
 @ThreadSafe
 public class ZuulFilterChainRunner<T extends ZuulMessage> extends BaseZuulFilterRunner<T, T> {
 
     private final ZuulFilter<T, T>[] filters;
 
-    public ZuulFilterChainRunner(ZuulFilter<T, T>[] zuulFilters, FilterUsageNotifier usageNotifier, FilterRunner<T, ?> nextStage) {
+    public ZuulFilterChainRunner(ZuulFilter<T, T>[] zuulFilters, FilterUsageNotifier usageNotifier,
+            FilterRunner<T, ?> nextStage) {
         super(zuulFilters[0].filterType(), usageNotifier, nextStage);
         this.filters = zuulFilters;
     }
 
-    public ZuulFilterChainRunner(ZuulFilter<T, T>[] zuulFilters, FilterUsageNotifier usageNotifier) {
+    public ZuulFilterChainRunner(ZuulFilter<T, T>[] zuulFilters,
+            FilterUsageNotifier usageNotifier) {
         this(zuulFilters, usageNotifier, null);
     }
 
@@ -71,6 +73,7 @@ public class ZuulFilterChainRunner<T extends ZuulMessage> extends BaseZuulFilter
         }
     }
 
+    // 执行 filter chain
     private final void runFilters(final T mesg, final AtomicInteger runningFilterIdx) {
         T inMesg = mesg;
         String filterName = "-";
@@ -89,10 +92,9 @@ public class ZuulFilterChainRunner<T extends ZuulMessage> extends BaseZuulFilter
                 i = runningFilterIdx.incrementAndGet();
             }
 
-            //Filter chain has reached its end, pass result to the next stage
+            // 执行下一阶段的 runner，inbound --> endpoint --> outbound
             invokeNextStage(inMesg);
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             handleException(inMesg, filterName, ex);
         }
     }
@@ -110,10 +112,11 @@ public class ZuulFilterChainRunner<T extends ZuulMessage> extends BaseZuulFilter
             for (int i = 0; i < limit; i++) {
                 final ZuulFilter<T, T> filter = filters[i];
                 filterName = filter.filterName();
-                if ((! filter.isDisabled()) && (! shouldSkipFilter(inMesg, filter))) {
+                if ((!filter.isDisabled()) && (!shouldSkipFilter(inMesg, filter))) {
                     final HttpContent newChunk = filter.processContentChunk(inMesg, chunk);
-                    if (newChunk == null)  {
-                        //Filter wants to break the chain and stop propagating this chunk any further
+                    if (newChunk == null) {
+                        //Filter wants to break the chain and stop propagating this chunk any
+                        // further
                         return;
                     }
                     //deallocate original chunk if necessary
@@ -134,15 +137,15 @@ public class ZuulFilterChainRunner<T extends ZuulMessage> extends BaseZuulFilter
 
                 // Record passport states for start and end of buffering bodies.
                 if (isAwaitingBody) {
-                    CurrentPassport passport = CurrentPassport.fromSessionContext(inMesg.getContext());
+                    CurrentPassport passport = CurrentPassport.fromSessionContext(
+                            inMesg.getContext());
                     if (inMesg.hasCompleteBody()) {
                         if (inMesg instanceof HttpRequestMessage) {
                             passport.addIfNotAlready(PassportState.FILTERS_INBOUND_BUF_END);
                         } else if (inMesg instanceof HttpResponseMessage) {
                             passport.addIfNotAlready(PassportState.FILTERS_OUTBOUND_BUF_END);
                         }
-                    }
-                    else {
+                    } else {
                         if (inMesg instanceof HttpRequestMessage) {
                             passport.addIfNotAlready(PassportState.FILTERS_INBOUND_BUF_START);
                         } else if (inMesg instanceof HttpResponseMessage) {
@@ -156,12 +159,10 @@ public class ZuulFilterChainRunner<T extends ZuulMessage> extends BaseZuulFilter
                     runFilters(inMesg, runningFilterIdx);
                 }
             }
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             handleException(inMesg, filterName, ex);
         } finally {
             PerfMark.stopTask(getClass().getName(), "filterChunk");
         }
     }
-
 }
