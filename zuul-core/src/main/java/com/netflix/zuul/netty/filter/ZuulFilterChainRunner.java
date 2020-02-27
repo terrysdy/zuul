@@ -86,6 +86,7 @@ public class ZuulFilterChainRunner<T extends ZuulMessage> extends BaseZuulFilter
                 filterName = filter.filterName();
                 final T outMesg = filter(filter, inMesg);
                 if (outMesg == null) {
+                    // 异步 filter，直接 return，异步 filter doOnnext 会继续 filter
                     return; //either async filter or waiting for the message body to be buffered
                 }
                 inMesg = outMesg;

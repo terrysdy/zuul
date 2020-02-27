@@ -91,7 +91,7 @@ public class SampleServerStartup extends BaseServerStartup {
     }
 
     /**
-     * 建议 port --> ChannelInitializer 映射
+     * 建立 port --> ChannelInitializer 映射
      * 不同类型 server ChannelInitializer init() 方法，将对应的 channel handler 添加到 pipeline
      */
     @Override

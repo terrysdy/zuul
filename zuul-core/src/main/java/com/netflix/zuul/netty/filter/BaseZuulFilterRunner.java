@@ -247,7 +247,7 @@ public abstract class BaseZuulFilterRunner<I extends ZuulMessage, O extends Zuul
                 return (outMesg != null) ? outMesg : filter.getDefaultOutput(inMesg);
             }
 
-            // async filter
+            // 异步 filter
             PerfMark.startTask(filter.filterName(), "applyAsync");
             try {
                 final Link nettyToSchedulerLink = PerfMark.linkOut();
