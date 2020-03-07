@@ -368,6 +368,7 @@ public abstract class BaseZuulChannelInitializer extends ChannelInitializer<Chan
                 requestFilters,
                 filterUsageNotifier, endPoint);
 
+        //  组装 inBound filter、endpoint、outBound filter 到 pipeline
         pipeline.addLast(new ZuulFilterChainHandler(requestFilterChain, responseFilterChain));
     }
 

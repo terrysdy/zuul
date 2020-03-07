@@ -1,7 +1,9 @@
 package com.github.terrysdy.zuultestserver2;
 
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -12,8 +14,10 @@ import org.springframework.web.bind.annotation.RestController;
 public class TestController {
 
     @GetMapping("hello")
-    public String hello(){
-        return "hello";
+    public String hello(@RequestParam(value = "uid", required = false) String uid) {
+        if (StringUtils.isEmpty(uid)) {
+            uid = "";
+        }
+        return "hello from server2" + uid;
     }
-
 }

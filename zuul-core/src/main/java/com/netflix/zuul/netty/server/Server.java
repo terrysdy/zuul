@@ -285,8 +285,10 @@ public class Server {
         private final int workerThreads;
         private final EventLoopGroupMetrics eventLoopGroupMetrics;
 
-        private EventLoopGroup clientToProxyBossPool; //  acceptor eventLoop
-        private EventLoopGroup clientToProxyWorkerPool; // worker eventLoop
+        // acceptor eventLoop
+        private EventLoopGroup clientToProxyBossPool;
+        // worker eventLoop
+        private EventLoopGroup clientToProxyWorkerPool;
         private Class<? extends ServerChannel> channelType;
         private Map<ChannelOption, ?> transportChannelOptions;
 
@@ -323,7 +325,7 @@ public class Server {
             ThreadFactory workerThreadFactory = new CategorizedThreadFactory(
                     name + "-ClientToZuulWorker");
             Executor workerExecutor = new ThreadPerTaskExecutor(
-                    workerThreadFactory); // 每个 task 用新的线程
+                    workerThreadFactory);
 
             Map<ChannelOption, Object> extraOptions = new HashMap<>();
             boolean useNio = FORCE_NIO.get();
