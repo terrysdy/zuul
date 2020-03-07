@@ -18,6 +18,10 @@ public class TestController {
         if (StringUtils.isEmpty(uid)) {
             uid = "";
         }
+<<<<<<< HEAD
         return "hello from server2" + uid;
+=======
+        return "hello" + uid;
+>>>>>>> 109dc1052a4779911a4c019466848c9f62589cfa
     }
 }
